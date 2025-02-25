@@ -1,125 +1,131 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_common/logging.dart';
+import 'package:flutter_common/network/api_service.dart';
+import 'package:flutter_common/network/browser_service.dart';
+import 'package:flutter_common/network/error_interceptor.dart';
+import 'package:flutter_common/network/logging_interceptor.dart';
 
-void main() {
-  runApp(const MyApp());
+import 'package:flutter_common/platform/io_platform.dart';
+import 'package:flutter_demo/services/app_config_service.dart';
+import 'package:flutter_demo/services/legalities_service.dart';
+import 'package:flutter_demo/services/nav_service.dart';
+import 'package:flutter_demo/services/settings_service.dart';
+import 'package:flutter_demo/theme.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:get_it/get_it.dart';
+import 'app_router.dart';
+import 'app_router.gr.dart';
+import 'models/common/language.dart';
+
+Future<void> main() async {
+  runZonedGuarded(() {
+    Future(() async {
+      await _initEnv();
+
+      WidgetsFlutterBinding.ensureInitialized();
+
+      // allow any device orientation
+      await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+
+      // final deviceToken = await _initFirebase();
+
+      await registerServices();
+      runApp(
+        App(
+          key: GetIt.I<SettingsService>().appStateKey,
+          language:
+           Language.german,
+        ),
+      );
+    });
+  }, (error, stackTrace) {
+    // workaround to prevent missing network image logs
+    // https://github.com/flutter/flutter/issues/69125 (closed as duplicate)
+    if (error is NetworkImageLoadException) return;
+    App.logger.e(error);
+    App.logger.e(stackTrace);
+  });
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+Future<void> registerServices() async {
+  // router must not be initialized inside of a build-method
+  final appRouter = AppRouter();
+  //GetIt.I.registerSingleton(appRouter);
+  GetIt.I.registerSingleton(
+    NavService(
+      appRouter,
+      defaultRoute: HomeRoute(),
+    ),
+  );
+  final browserService = BrowserService();
+  GetIt.I.registerSingleton(browserService);
 
-  // This widget is the root of your application.
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
-    );
+   final apiService = ApiService(
+     apiUrl: dotenv.get('API_URL'),
+     initialInterceptors: [LoggingInterceptor()],
+   );
+   GetIt.I.registerSingleton(apiService);
+   GetIt.I.registerSingleton(LegalitiesService(browserService, apiService));
+
+   apiService.addInterceptor(ErrorInterceptor());
+   GetIt.I.registerSingleton(SettingsService());
+   GetIt.I.registerSingletonAsync(AppConfigService().init);
+
+   await GetIt.I.allReady();
+}
+
+Future<void> _initEnv() async {
+  final platform = initPlatform();
+  String envFilePath() {
+    if (platform.isRelease) return 'dotenv.prod';
+    return 'dotenv.dev';
   }
+
+  await dotenv.load(fileName: envFilePath());
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
+class App extends StatefulWidget {
+  static final logger = createLogger(App);
+  final Language language;
 
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+  const App({super.key, required this.language});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<App> createState() => AppState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-
-  void _incrementCounter() {
+class AppState extends State<App> {
+  late Language _language;
+  Language get language => _language;
+  set language(Language value) {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _language = value;
     });
   }
 
   @override
+  void initState() {
+    super.initState();
+    language = widget.language;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+    final appRouter = GetIt.I<AppRouter>();
+    return MaterialApp.router(
+      debugShowCheckedModeBanner: false,
+      title: 'Demo',
+      theme: themeData,
+      routerDelegate: appRouter.delegate(),
+      routeInformationParser: appRouter.defaultRouteParser(),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: Locale(_language.languageCode),
     );
   }
 }
